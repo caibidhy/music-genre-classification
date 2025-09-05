@@ -4,6 +4,8 @@
 *.pt
 data/raw/
 data/processed/
+data/gtzan/
+*.zip
 *.wav
 *.mp3
 .ipynb_checkpoints
