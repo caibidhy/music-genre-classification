@@ -3,6 +3,7 @@ import pytest
 import soundfile as sf
 
 from src.data.preprocessing import load_audio, normalize_audio
+from src.data import spectrogram_utils
 
 
 def test_load_audio_reads_file(tmp_path):
@@ -24,3 +25,15 @@ def test_normalize_audio_scales_to_unit_range():
     normalized = normalize_audio(signal)
     assert np.max(np.abs(normalized)) == pytest.approx(1.0)
     assert np.allclose(normalized, signal / 0.5)
+
+
+def test_melspectrogram_fallback(monkeypatch):
+    def _raise(*args, **kwargs):
+        raise RuntimeError("forced failure")
+
+    monkeypatch.setattr(spectrogram_utils.librosa.feature, "melspectrogram", _raise)
+
+    signal = np.random.randn(22050).astype(np.float32)
+    mel = spectrogram_utils.melspectrogram(signal, sample_rate=22050, n_mels=64)
+
+    assert mel.shape[0] == 64
