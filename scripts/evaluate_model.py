@@ -1,75 +1,74 @@
 # scripts/evaluate_model.py
-import argparse
-import csv
-import pathlib
-import numpy as np
-import librosa
-import torch
-import torch.nn as nn
+import argparse, csv, numpy as np, librosa, torch, torch.nn as nn
 from sklearn.preprocessing import LabelEncoder
 
+def to_log_mel(y, sr, n_mels, n_fft, hop):
+    S = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=n_fft,
+                                       hop_length=hop, n_mels=n_mels, power=2.0)
+    return librosa.power_to_db(S, ref=np.max)
 
-class TinyLinear(nn.Module):
-    def __init__(self, in_dim: int, n_classes: int):
+def center_crop_or_pad(S, frames):
+    T = S.shape[1]
+    if T == frames: return S
+    if T > frames:
+        s = (T - frames) // 2
+        return S[:, s:s+frames]
+    pad = frames - T
+    l = pad // 2; r = pad - l
+    return np.pad(S, ((0,0),(l,r)), mode="reflect")
+
+class TinyCNN(nn.Module):
+    def __init__(self, n_classes: int):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.LayerNorm(in_dim),
-            nn.Linear(in_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, n_classes),
+        self.feat = nn.Sequential(
+            nn.Conv2d(1,16,3,padding=1), nn.BatchNorm2d(16), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(16,32,3,padding=1), nn.BatchNorm2d(32), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(32,64,3,padding=1), nn.BatchNorm2d(64), nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1,1))
         )
-
-    def forward(self, x):
-        return self.net(x)
-
-
-def extract_meanstd(path: str, sr: int, n_mels: int) -> np.ndarray:
-    y, _ = librosa.load(path, sr=sr, mono=True)
-    S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=n_mels, power=2.0)
-    S_db = librosa.power_to_db(S, ref=np.max)
-    feat = np.concatenate([S_db.mean(axis=1), S_db.std(axis=1)], axis=0).astype(np.float32)
-    return feat  # (2 * n_mels,)
-
+        self.cls = nn.Linear(64, n_classes)
+    def forward(self,x):
+        h = self.feat(x).view(x.size(0), -1)
+        return self.cls(h)
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--val_csv", type=str, default="data/index/val.csv")
-    ap.add_argument("--ckpt", type=str, default="runs/exp_meanstd/model.pt")
-    ap.add_argument("--n_mels", type=int, default=64)
+    ap.add_argument("--ckpt", type=str, default="runs/exp_cnn/model.pt")
     ap.add_argument("--sr", type=int, default=22050)
+    ap.add_argument("--n_mels", type=int, default=64)
+    ap.add_argument("--frames", type=int, default=256)
+    ap.add_argument("--n_fft", type=int, default=2048)
+    ap.add_argument("--hop_length", type=int, default=512)
     args = ap.parse_args()
 
     ckpt = torch.load(args.ckpt, map_location="cpu")
-    classes = ckpt.get("label_encoder")
-    if classes is None:
-        raise SystemExit("The checkpoint is missing the label_encoder. Please retrain using the train script in this project.")
+    classes = ckpt["label_encoder"]
+    n_mels  = int(ckpt.get("n_mels", args.n_mels))
+    frames  = int(ckpt.get("frames", args.frames))
 
-    # 以 checkpoint 的 n_mels 为准，避免不一致
-    n_mels = int(ckpt.get("n_mels", args.n_mels))
-    in_dim = n_mels * 2  # mean+std
-
-    model = TinyLinear(in_dim, len(classes))
-    model.load_state_dict(ckpt["state_dict"])
-    model.eval()
-
+    model = TinyCNN(len(classes))
+    model.load_state_dict(ckpt["state_dict"]); model.eval()
     le = LabelEncoder().fit(classes)
 
-    tot, correct = 0, 0
+    tot=0; correct=0
     with open(args.val_csv, "r", encoding="utf-8") as fp:
-        rdr = csv.DictReader(fp)
-        for r in rdr:
-            feat = extract_meanstd(r["path"], args.sr, n_mels)
-            x = torch.from_numpy(feat).unsqueeze(0)  # (1, 2*n_mels)
-            pred_idx = model(x).argmax(1).item()
-            if pred_idx == le.transform([r["label"]])[0]:
+        for r in csv.DictReader(fp):
+            y, _ = librosa.load(r["path"], sr=args.sr, mono=True)
+            S_db = to_log_mel(y, args.sr, n_mels, args.n_fft, args.hop_length)
+            S_db = center_crop_or_pad(S_db, frames)
+            mu, sigma = S_db.mean(), S_db.std() + 1e-6
+            S_db = (S_db - mu) / sigma
+            x = torch.from_numpy(S_db).unsqueeze(0).unsqueeze(0).float()  # (1,1,n_mels,frames)
+            pred = model(x).argmax(1).item()
+            if pred == le.transform([r["label"]])[0]:
                 correct += 1
             tot += 1
-
-    if tot == 0:
-        print("The Val set is empty. Please run preprocess_data.py first to generate the index.")
+    if tot==0:
+        print("Val is empty, please run preprocess_data.py first.")
     else:
         print(f"Eval accuracy: {correct}/{tot} = {correct/tot:.3f}")
 
-
 if __name__ == "__main__":
     main()
+
