@@ -1,4 +1,5 @@
-﻿# Music Genre Classification
+﻿
+# Music Genre Classification
 
 A deep learning project for automatic music genre classification using CNN and CRNN.
 

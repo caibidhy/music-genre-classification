@@ -18,3 +18,8 @@ results/logs/
 wandb/
 .cache/
 .pytest_cache/
+data/**
+runs/**
+*.pt
+__pycache__/
+*.pyc

@@ -1,0 +1,40 @@
+﻿project:
+  name: music-genre-classification
+  version: 1.0.0
+
+data:
+  train_csv: data/index/train.csv
+  val_csv:   data/index/val.csv
+
+features:
+  n_mels: 96
+  frames: 512
+  n_fft: 2048
+  hop_length: 512
+
+train:
+  epochs: 30
+  batch_size: 16
+  num_workers: 0
+  device: cuda
+  output_dir: runs/exp_best_m96f512_B
+
+earlystop:
+  patience: 6
+  min_delta: 0.005
+
+lr_scheduler:
+  patience: 2
+  factor: 0.5
+
+augment:
+  augment_prob: 0.4
+  aug_gain_db: 2
+  aug_shift_ms: 30
+  aug_noise_snr: 35
+  spec_time_mask: 1
+  spec_freq_mask: 1
+  spec_time_max: 8
+  spec_freq_max: 4
+
+
